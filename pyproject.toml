@@ -12,6 +12,9 @@ dependencies = [
     "pyyaml",
 ]
 
+[project.scripts]
+drone-autonomy-demo = "drone_autonomy_lab.simulation.demo:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest",
