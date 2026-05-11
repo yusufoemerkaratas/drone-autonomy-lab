@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from drone_autonomy_lab.simulation.perception import PerceptionMock
+from drone_autonomy_lab.simulation.sensors import SensorSuite
 from drone_autonomy_lab.simulation.state import DEFAULT_INITIAL_STATE, DroneState
 
 
@@ -39,6 +41,8 @@ class DroneSimulator:
         initial_state: DroneState = DEFAULT_INITIAL_STATE,
         wind_mps: tuple[float, float, float] = (0.0, 0.0, 0.0),
         gust_std_mps: float = 0.0,
+        sensor_suite: SensorSuite | None = None,
+        perception: PerceptionMock | None = None,
     ) -> None:
         if dt_s <= 0:
             raise ValueError("dt_s must be positive")
@@ -49,12 +53,36 @@ class DroneSimulator:
         self.wind_mps = wind_mps
         self.gust_std_mps = gust_std_mps
         self.rng = np.random.default_rng(seed)
+        self.sensor_suite = sensor_suite
+        self.perception = perception
 
     def step(self) -> SimulationFrame:
         """Advance the true state by exactly one fixed timestep."""
         self.timestamp_s = round(self.timestamp_s + self.dt_s, 10)
         self.state = self._advance_state(self.state, self.timestamp_s)
-        return SimulationFrame(timestamp_s=self.timestamp_s, true_state=self.state)
+        measurements = {}
+        detections: list[dict[str, object]] = []
+
+        if self.sensor_suite is not None:
+            measurements = self.sensor_suite.measure(
+                timestamp_s=self.timestamp_s,
+                state=self.state,
+                dt_s=self.dt_s,
+                rng=self.rng,
+            )
+        if self.perception is not None:
+            detections = self.perception.detect(
+                timestamp_s=self.timestamp_s,
+                state=self.state,
+                rng=self.rng,
+            )
+
+        return SimulationFrame(
+            timestamp_s=self.timestamp_s,
+            true_state=self.state,
+            measurements=measurements,
+            detections=detections,
+        )
 
     def run(self, duration_s: float) -> list[SimulationFrame]:
         """Run the simulator for a fixed duration and return all frames."""
