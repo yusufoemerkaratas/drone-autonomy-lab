@@ -1,0 +1,22 @@
+environment:
+  name: calm-indoor-yard
+  gravity_mps2: 9.80665
+  time_step_s: 0.02
+  duration_s: 180
+
+sensors:
+  imu:
+    update_rate_hz: 100
+    accel_noise_std: 0.03
+    gyro_noise_std: 0.002
+  gps:
+    update_rate_hz: 5
+    position_noise_std_m: 0.4
+  barometer:
+    update_rate_hz: 20
+    altitude_noise_std_m: 0.08
+
+disturbances:
+  wind:
+    mean_mps: [0.4, 0.0, 0.0]
+    gust_std_mps: 0.15
