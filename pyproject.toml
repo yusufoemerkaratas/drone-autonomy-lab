@@ -1,0 +1,17 @@
+[project]
+name = "drone-autonomy-lab"
+version = "0.1.0"
+description = "Simulation-first autonomous drone mission stack"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
