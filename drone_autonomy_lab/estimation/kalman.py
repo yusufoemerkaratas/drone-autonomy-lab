@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Mapping
 
 import numpy as np
 
@@ -37,6 +38,7 @@ class KalmanFilter:
         initial_state: ArrayLike | None = None,
         initial_covariance: ArrayLike | None = None,
         process_noise: float | ArrayLike = 0.05,
+        measurement_noise: Mapping[str, float | ArrayLike] | None = None,
     ) -> None:
         state = np.zeros(6, dtype=float) if initial_state is None else np.asarray(initial_state, dtype=float)
         if state.shape != (6,):
@@ -45,6 +47,11 @@ class KalmanFilter:
         self.x = state.reshape(6, 1)
         self.P = self._matrix(initial_covariance, size=6, default=1.0)
         self.Q = self._matrix(process_noise, size=6, default=0.05)
+        noise = measurement_noise or {}
+        self.R: dict[str, np.ndarray] = {
+            "gps": self._matrix(noise.get("gps", 0.16), size=2, default=0.16),
+            "barometer": self._matrix(noise.get("barometer", 0.01), size=1, default=0.01),
+        }
 
     def predict(self, dt: float, control_input: ArrayLike | None = None) -> np.ndarray:
         """Advance the estimate using IMU acceleration as control input."""
@@ -72,6 +79,30 @@ class KalmanFilter:
 
         self.x = f @ self.x + b @ acceleration
         self.P = f @ self.P @ f.T + self.Q
+        return self.state_vector.copy()
+
+    def update(self, measurement: Mapping[str, float] | ArrayLike, sensor_type: str) -> np.ndarray:
+        """Correct the estimate with a supported sensor measurement."""
+        if sensor_type == "gps":
+            h = np.zeros((2, 6), dtype=float)
+            h[0, 0] = 1.0
+            h[1, 1] = 1.0
+            z = self._gps_measurement(measurement)
+        elif sensor_type == "barometer":
+            h = np.zeros((1, 6), dtype=float)
+            h[0, 2] = 1.0
+            z = self._barometer_measurement(measurement)
+        else:
+            raise ValueError(f"Unsupported sensor_type: {sensor_type}")
+
+        r = self.R[sensor_type]
+        innovation = z - h @ self.x
+        innovation_covariance = h @ self.P @ h.T + r
+        gain = self.P @ h.T @ np.linalg.inv(innovation_covariance)
+        identity = np.eye(6, dtype=float)
+
+        self.x = self.x + gain @ innovation
+        self.P = (identity - gain @ h) @ self.P
         return self.state_vector.copy()
 
     @property
@@ -110,3 +141,16 @@ class KalmanFilter:
         if array.shape == (size, size):
             return array
         raise ValueError(f"Expected scalar, length-{size} vector, or {size}x{size} matrix")
+
+    @staticmethod
+    def _gps_measurement(measurement: Mapping[str, float] | ArrayLike) -> np.ndarray:
+        if isinstance(measurement, Mapping):
+            return np.array([[float(measurement["x_m"])], [float(measurement["y_m"])]])
+        return np.asarray(measurement, dtype=float).reshape(2, 1)
+
+    @staticmethod
+    def _barometer_measurement(measurement: Mapping[str, float] | ArrayLike) -> np.ndarray:
+        if isinstance(measurement, Mapping):
+            key = "altitude_m" if "altitude_m" in measurement else "z_m"
+            return np.array([[float(measurement[key])]])
+        return np.asarray(measurement, dtype=float).reshape(1, 1)
