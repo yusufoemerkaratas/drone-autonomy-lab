@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from heapq import heappop, heappush
 from math import ceil, floor, hypot
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -25,6 +25,15 @@ class GridObstacle:
     obstacle_id: str
     center_m: WorldPoint2D
     size_m: WorldPoint2D
+
+
+@dataclass(frozen=True)
+class ReplanResult:
+    """Result returned when checking whether a path must be replanned."""
+
+    path: list[WorldPoint2D] | None
+    replanned: bool
+    event_log: list[str] = field(default_factory=list)
 
 
 class OccupancyGrid:
@@ -181,6 +190,35 @@ class AStarPlanner:
         else:
             start_m = state
         return self.find_path(start_m, (waypoint.x_m, waypoint.y_m))
+
+    def replan_if_blocked(
+        self,
+        *,
+        current_path: Sequence[WorldPoint2D] | None,
+        start_m: WorldPoint2D,
+        goal_m: WorldPoint2D,
+        new_obstacles: Iterable[GridObstacle | Mapping[str, object]],
+    ) -> ReplanResult:
+        """Add new obstacles and replan if they block the current path."""
+        event_log: list[str] = []
+        for obstacle in new_obstacles:
+            grid_obstacle = _coerce_obstacle(obstacle)
+            self.grid.add_obstacle(grid_obstacle)
+            event_log.append(f"obstacle_added:{grid_obstacle.obstacle_id}")
+
+        blocked = current_path is None or any(
+            self.grid.is_occupied(self.grid.world_to_grid(point))
+            for point in current_path
+        )
+        if not blocked:
+            return ReplanResult(path=list(current_path), replanned=False, event_log=event_log)
+
+        event_log.append("replan_triggered:path_blocked")
+        return ReplanResult(
+            path=self.find_path(start_m, goal_m),
+            replanned=True,
+            event_log=event_log,
+        )
 
     def _neighbors(self, cell: GridCell) -> list[GridCell]:
         offsets = [(1, 0), (-1, 0), (0, 1), (0, -1)]
