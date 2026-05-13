@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil, floor
+from heapq import heappop, heappush
+from math import ceil, floor, hypot
 from typing import Iterable, Mapping
 
 import numpy as np
 
 from drone_autonomy_lab.config import load_environment_config
+from drone_autonomy_lab.estimation import VehicleState
+from drone_autonomy_lab.planning.waypoint import Waypoint
 
 
 GridCell = tuple[int, int]
@@ -136,6 +139,62 @@ class OccupancyGrid:
         return copy
 
 
+class AStarPlanner:
+    """A* planner over an `OccupancyGrid`."""
+
+    def __init__(self, grid: OccupancyGrid, *, allow_diagonal: bool = False) -> None:
+        self.grid = grid
+        self.allow_diagonal = allow_diagonal
+
+    def find_path(self, start_m: WorldPoint2D, goal_m: WorldPoint2D) -> list[WorldPoint2D] | None:
+        """Find a world-coordinate path or return None when unreachable."""
+        start = self.grid.world_to_grid(start_m)
+        goal = self.grid.world_to_grid(goal_m)
+        if self.grid.is_occupied(start) or self.grid.is_occupied(goal):
+            return None
+
+        open_set: list[tuple[float, GridCell]] = []
+        heappush(open_set, (0.0, start))
+        came_from: dict[GridCell, GridCell] = {}
+        cost_so_far: dict[GridCell, float] = {start: 0.0}
+
+        while open_set:
+            _, current = heappop(open_set)
+            if current == goal:
+                return [self.grid.grid_to_world(cell) for cell in _reconstruct_path(came_from, current)]
+
+            for neighbor in self._neighbors(current):
+                step_cost = hypot(neighbor[0] - current[0], neighbor[1] - current[1])
+                new_cost = cost_so_far[current] + step_cost
+                if neighbor not in cost_so_far or new_cost < cost_so_far[neighbor]:
+                    cost_so_far[neighbor] = new_cost
+                    priority = new_cost + _heuristic(neighbor, goal)
+                    heappush(open_set, (priority, neighbor))
+                    came_from[neighbor] = current
+
+        return None
+
+    def plan_to_waypoint(self, state: VehicleState | WorldPoint2D, waypoint: Waypoint) -> list[WorldPoint2D] | None:
+        """Plan from the current vehicle position to a mission waypoint."""
+        if isinstance(state, VehicleState):
+            start_m = (state.position_m[0], state.position_m[1])
+        else:
+            start_m = state
+        return self.find_path(start_m, (waypoint.x_m, waypoint.y_m))
+
+    def _neighbors(self, cell: GridCell) -> list[GridCell]:
+        offsets = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+        if self.allow_diagonal:
+            offsets.extend([(1, 1), (1, -1), (-1, 1), (-1, -1)])
+
+        neighbors = [(cell[0] + dx, cell[1] + dy) for dx, dy in offsets]
+        return [
+            neighbor
+            for neighbor in neighbors
+            if self.grid.in_bounds(neighbor) and not self.grid.is_occupied(neighbor)
+        ]
+
+
 def _coerce_obstacle(obstacle: GridObstacle | Mapping[str, object]) -> GridObstacle:
     if isinstance(obstacle, GridObstacle):
         return obstacle
@@ -147,3 +206,16 @@ def _coerce_obstacle(obstacle: GridObstacle | Mapping[str, object]) -> GridObsta
         center_m=(float(center[0]), float(center[1])),
         size_m=(float(size[0]), float(size[1])),
     )
+
+
+def _heuristic(a: GridCell, b: GridCell) -> float:
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def _reconstruct_path(came_from: dict[GridCell, GridCell], current: GridCell) -> list[GridCell]:
+    path = [current]
+    while current in came_from:
+        current = came_from[current]
+        path.append(current)
+    path.reverse()
+    return path
